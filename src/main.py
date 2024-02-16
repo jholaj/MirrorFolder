@@ -3,82 +3,89 @@ import time
 import logging
 import shutil
 import os
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
-# define event handler for folder changes
-class SyncHandler(FileSystemEventHandler):
+class SyncHandler:
     def __init__(self, source_folder, replica_folder):
         self.source_folder = source_folder
         self.replica_folder = replica_folder
 
-    def on_created(self, event):
-        if event.is_directory:      # for folders
-            logging.info(f"Directory created: {event.src_path}")
-            self.sync_folder(event.src_path)
-        else:
-            logging.info(f"File created: {event.src_path}")
-            self.sync_file(event.src_path)
+    def sync(self):
+        self._sync_folder_content()
+        self._remove_files_not_in_source()
 
-    def on_modified(self, event):
-        if not event.is_directory:
-            logging.info(f"File modified: {event.src_path}")
-            self.sync_file(event.src_path)
+    def _sync_folder_content(self):
+        for root, dirs, files in os.walk(self.source_folder):
+            for dir_ in dirs:
+                self._create_directory(os.path.join(root, dir_))
 
-    def on_deleted(self, event):
-        if event.is_directory:
-            self.sync_folder(event.src_path)
-            logging.info(f"Directory deleted: {event.src_path}")
-        else:
-            self.sync_delete(event.src_path)
-            logging.info(f"File deleted: {event.src_path}")
-    
-    def sync_delete(self, src_path):
-        relative_path = os.path.relpath(src_path, self.source_folder)
-        dest_path = os.path.join(self.replica_folder, relative_path)
+            for file_ in files:
+                source_file_path = os.path.join(root, file_)
+                replica_file_path = os.path.join(self.replica_folder, os.path.relpath(source_file_path, self.source_folder))
+                
+                # last modification time of the source file
+                source_mtime = os.path.getmtime(source_file_path)
+                
+                # last modification time of the replica file
+                replica_mtime = None
+                if os.path.exists(replica_file_path):
+                    replica_mtime = os.path.getmtime(replica_file_path)
+                
+                # comparing modification times
+                if replica_mtime is None or source_mtime != replica_mtime:
+                    # if the replica file does not exist or its modification time differs from the source file
+                    if replica_mtime is None:
+                        logging.info(f"File in source folder created: {file_}")
+                    else:
+                        logging.info(f"File in source folder modified: {file_}")
+                    # copy the file
+                    self._copy_file(source_file_path)
 
-        if os.path.exists(dest_path):
-            if os.path.isdir(dest_path):        
-                shutil.rmtree(dest_path)
+    def _create_directory(self, src_dir):
+        dest_dir = os.path.join(self.replica_folder, os.path.relpath(src_dir, self.source_folder))
+        
+        # check if the directory already  exists in the replica folder
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)  # ensure subdirectories exist
+            logging.info(f"Folder in source directory: {src_dir} copied to: {dest_dir}")
+
+    def _copy_file(self, src_file):
+        dest_file = os.path.join(self.replica_folder, os.path.relpath(src_file, self.source_folder))
+        if not os.path.exists(dest_file) or os.path.getmtime(src_file) != os.path.getmtime(dest_file):
+            # if already created => changing content 
+            if os.path.exists(dest_file):
+                logging.info(f"File content in {src_file} synchronized to {dest_file}")
             else:
-                os.remove(dest_path)    # deleting in replica folder
-        else:
-            logging.warning(f"File or folder to delete not found: {dest_path}")
+                logging.info(f"File {src_file} synchronized to {dest_file}")
+            shutil.copy2(src_file, dest_file)
 
-    def sync_file(self, src_path):
-        relative_path = os.path.relpath(src_path, self.source_folder)
-        dest_path = os.path.join(self.replica_folder, relative_path)
-        if os.path.isdir(src_path):
-            shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
-        else:
-            shutil.copy2(src_path, dest_path)
-    
-    def sync_folder(self, src_path):
-        relative_path = os.path.relpath(src_path, self.source_folder)
-        dest_path = os.path.join(self.replica_folder, relative_path)
-        if os.path.exists(dest_path):
-            shutil.rmtree(dest_path)
-        os.makedirs(dest_path, exist_ok=True)  # ensure the directory exists in the replica folder
-        for root, dirs, files in os.walk(src_path):
+    def _remove_files_not_in_source(self):
+        for root, dirs, files in os.walk(self.replica_folder):
+            for file_ in files:
+                src_file = os.path.join(root, file_)
+                dest_file = os.path.join(self.source_folder, os.path.relpath(src_file, self.replica_folder))
+                if not os.path.exists(dest_file):
+                    os.remove(src_file)
+                    logging.info(f"File deletion from source directory synchronized in replica folder: {src_file}")
+
             for dir_ in dirs:
                 src_dir = os.path.join(root, dir_)
-                dest_dir = os.path.join(self.replica_folder, os.path.relpath(src_dir, self.source_folder))
-                os.makedirs(dest_dir, exist_ok=True)  # ensure subdirectories exist
+                dest_dir = os.path.join(self.source_folder, os.path.relpath(src_dir, self.replica_folder))
+                if not os.path.exists(dest_dir):
+                    shutil.rmtree(src_dir)
+                    logging.info(f"Directory deletion from source directory synchronized in replica folder: {src_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description='Synchronizing folders')
     parser.add_argument('source_folder', type=str, help='Path to source folder')
     parser.add_argument('replica_folder', type=str, help='Path to replica folder')
-    parser.add_argument('-i', '--interval', type=int, default=10, help='Sync interval in seconds (default: 10)')
+    parser.add_argument('-i', '--interval', type=int, default=1, help='Sync interval in seconds (default: 1)')
     parser.add_argument('-l', '--log_file', type=str, default='sync_log.txt', help='Path to log file (default: sync_log.txt)')
     args = parser.parse_args()
 
     # logger
-    # needs initializing logging.root.handlers or file will be empty
-    logging.root.handlers = []
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(message)s', 
+        format='%(asctime)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.FileHandler(args.log_file),
@@ -86,18 +93,14 @@ def main():
         ]
     )
 
-    # start synchronization
-    event_handler = SyncHandler(args.source_folder, args.replica_folder)
-    observer = Observer()
-    observer.schedule(event_handler, args.source_folder, recursive=True)
-    observer.start()
-
+    sync_handler = SyncHandler(args.source_folder, args.replica_folder)
+    logging.info("Folder synchronization starts...")
     try:
         while True:
+            sync_handler.sync()
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+        logging.info("Synchronization ended by user...")
 
 if __name__ == "__main__":
     main()
