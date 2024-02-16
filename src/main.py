@@ -4,6 +4,7 @@ import logging
 import shutil
 import os
 import hashlib
+import sys
 
 class SyncHandler:
     def __init__(self, source_folder, replica_folder):
@@ -92,8 +93,15 @@ def main():
         ]
     )
 
+    # exception handling if dirs doesnt exist
+    if not os.path.exists(args.source_folder) or not os.path.exists(args.replica_folder):
+        logging.error("Error: Source or Replica folder does not exist. Exiting...")
+        sys.exit(1)
+    else:
+        logging.info("Folder synchronization starts...")
+
     sync_handler = SyncHandler(args.source_folder, args.replica_folder)
-    logging.info("Folder synchronization starts...")
+
     try:
         while True:
             sync_handler.sync()
