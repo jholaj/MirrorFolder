@@ -5,7 +5,7 @@
 - Comparing hashes of files (MD5)
 #### Prerequisites
 - Python 3.x
-- Built-in libraries: os, argparse, time, shutil, logging, hashlib
+- Built-in libraries: os, argparse, time, shutil, logging, hashlib, sys
 #### Usage
 ```
 python main.py -i 1 -l sync_log.txt SOURCE_FOLDER REPLICA_FOLDER
