@@ -3,6 +3,7 @@ import time
 import logging
 import shutil
 import os
+import hashlib
 
 class SyncHandler:
     def __init__(self, source_folder, replica_folder):
@@ -14,49 +15,47 @@ class SyncHandler:
         self._remove_files_not_in_source()
 
     def _sync_folder_content(self):
+        # walking through folders recursively
         for root, dirs, files in os.walk(self.source_folder):
             for dir_ in dirs:
+                src_dir = os.path.join(root, dir_)
+                dest_dir = os.path.join(self.replica_folder, os.path.relpath(src_dir, self.source_folder))
+                if not os.path.exists(dest_dir):
+                    logging.info(f"Folder created in source folder: {src_dir}")
                 self._create_directory(os.path.join(root, dir_))
 
             for file_ in files:
                 source_file_path = os.path.join(root, file_)
                 replica_file_path = os.path.join(self.replica_folder, os.path.relpath(source_file_path, self.source_folder))
                 
-                # last modification time of the source file
-                source_mtime = os.path.getmtime(source_file_path)
-                
-                # last modification time of the replica file
-                replica_mtime = None
-                if os.path.exists(replica_file_path):
-                    replica_mtime = os.path.getmtime(replica_file_path)
-                
-                # comparing modification times
-                if replica_mtime is None or source_mtime != replica_mtime:
-                    # if the replica file does not exist or its modification time differs from the source file
-                    if replica_mtime is None:
+                source_hash = self._hash_file(source_file_path)
+                replica_hash = self._hash_file(replica_file_path) if os.path.exists(replica_file_path) else None
+
+                # comparing hashes
+                if replica_hash != source_hash:
+                    if not os.path.exists(replica_file_path):
                         logging.info(f"File in source folder created: {file_}")
+                        logging.info(f"File {source_file_path} synchronized to {replica_file_path}")
                     else:
                         logging.info(f"File in source folder modified: {file_}")
-                    # copy the file
-                    self._copy_file(source_file_path)
+                        logging.info(f"File content in {source_file_path} synchronized to {replica_file_path}")
+                    shutil.copy2(source_file_path, replica_file_path)
 
     def _create_directory(self, src_dir):
         dest_dir = os.path.join(self.replica_folder, os.path.relpath(src_dir, self.source_folder))
         
-        # check if the directory already  exists in the replica folder
+        # check if the directory already exists in the replica folder
         if not os.path.exists(dest_dir):
             os.makedirs(dest_dir, exist_ok=True)  # ensure subdirectories exist
             logging.info(f"Folder in source directory: {src_dir} copied to: {dest_dir}")
-
-    def _copy_file(self, src_file):
-        dest_file = os.path.join(self.replica_folder, os.path.relpath(src_file, self.source_folder))
-        if not os.path.exists(dest_file) or os.path.getmtime(src_file) != os.path.getmtime(dest_file):
-            # if already created => changing content 
-            if os.path.exists(dest_file):
-                logging.info(f"File content in {src_file} synchronized to {dest_file}")
-            else:
-                logging.info(f"File {src_file} synchronized to {dest_file}")
-            shutil.copy2(src_file, dest_file)
+    
+    # hash function, using MD5
+    def _hash_file(self, file_path):
+        hash_md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
 
     def _remove_files_not_in_source(self):
         for root, dirs, files in os.walk(self.replica_folder):
